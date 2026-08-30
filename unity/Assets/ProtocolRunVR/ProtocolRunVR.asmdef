@@ -1,0 +1,7 @@
+{
+  "name": "ProtocolRunVR",
+  "rootNamespace": "ProtocolRunVR",
+  "references": ["Unity.XR.Interaction.Toolkit", "Unity.ugui"],
+  "autoReferenced": true,
+  "versionDefines": [{"name": "com.unity.xr.interaction.toolkit", "expression": "[3.0.0,)", "define": "PRVR_XRI_3"}]
+}

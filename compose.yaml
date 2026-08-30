@@ -1,0 +1,14 @@
+services:
+  api:
+    build: ./backend
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file: ./backend/.env
+    environment:
+      PRVR_STORE: sqlite
+      PRVR_SQLITE_PATH: /data/protocolrun.sqlite3
+    volumes:
+      - study-data:/data
+    restart: unless-stopped
+volumes:
+  study-data:
