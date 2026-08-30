@@ -1,4 +1,4 @@
-# Meta Hands SDK · 0.4.0 RC2
+# Meta Hands SDK · 0.5.0 RC6
 
 통합 후보 버전. [전체 시작 안내](../docs/START_HERE_KO.md)를 먼저 따른다.
 

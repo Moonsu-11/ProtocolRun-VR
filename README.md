@@ -2,11 +2,15 @@
 
 Autonomous operations for a three-cube VR hand interaction study: observe a real interaction failure, diagnose it with Google ADK + Gemini, restore only the approved baseline and verify recovery with a new grab of the same object.
 
-**0.4.0 RC2 is an integration candidate, not a verified final submission.** The application has no simulated AI fallback or fake dashboard metrics. Automated tests use explicitly identified fixtures. Real Unity compilation, Quest hardware, Gemini credentials and Google Cloud deployment must pass the acceptance checklist.
+**0.5.0 RC6 is an integration candidate, not a verified final submission.** The application has no simulated AI fallback or fake dashboard metrics. Automated tests use explicitly identified fixtures. Real Unity compilation, Quest hardware, Gemini credentials and Google Cloud deployment must pass the acceptance checklist.
 
 ## Start here
 
 - Korean step-by-step installation: [docs/START_HERE_KO.md](docs/START_HERE_KO.md)
+- RC3 evidence-retention fix and retest steps: [docs/UPDATE_0.5.0_RC3_KO.md](docs/UPDATE_0.5.0_RC3_KO.md)
+- RC4 single-call ADK timeout fix: [docs/UPDATE_0.5.0_RC4_KO.md](docs/UPDATE_0.5.0_RC4_KO.md)
+- RC5 graceful ADK completion fix: [docs/UPDATE_0.5.0_RC5_KO.md](docs/UPDATE_0.5.0_RC5_KO.md)
+- RC6 compact/pinned diagnosis evidence fix: [docs/UPDATE_0.5.0_RC6_KO.md](docs/UPDATE_0.5.0_RC6_KO.md)
 - API / security / recovery contract: [docs/API_CONTRACT.md](docs/API_CONTRACT.md)
 - Submission and real-world acceptance: [docs/SUBMISSION.md](docs/SUBMISSION.md)
 - Current Unity Meta SDK: [unity-meta/README_KO.md](unity-meta/README_KO.md)
@@ -40,7 +44,7 @@ flowchart TD
   U -->|"New same-target grab"| API
 ```
 
-A and B must first be grabbed and released normally. A remains healthy. The researcher deliberately disables B's captured direct HandGrab/Grab paths. C is intentionally non-grabbable and cannot be repaired into a grabbable object. Gemini reads actual tracking, pinch, component and interaction evidence. Only approved original component states may be restored. A restore ACK alone cannot pass verification.
+At consent, the SDK registers A and B's healthy component baselines and then automatically disables B's captured direct HandGrab/Grab paths before participant interaction. Only A is used for normal practice. B therefore fails on the participant's first attempt, while C is intentionally non-grabbable and cannot be repaired into a grabbable object. Gemini reads actual tracking, pinch, component and interaction evidence. Only B's approved original component states may be restored. A restore ACK alone cannot pass verification.
 
 ## Run the standalone server locally
 
@@ -83,10 +87,12 @@ Target versions from the supplied project: Unity **6000.3.16f1**, Meta XR All-in
 2. Run `Tools > ProtocolRun VR > Install Network Study`; save the scene. Check Head, IHand sources and drop volume.
 3. In the server console, create a `meta-hands-v1` session and copy Connection JSON.
 4. Paste it into `Tools > ProtocolRun VR > Configure Connection`. It is stored outside the Unity project.
-5. Enter Play, accept consent in VR, then grab/release A and B for practice.
-6. In target-approach/grab phase, with hands away from B, the researcher injects B's deliberate fault through the Session Inspector.
+5. Enter Play and accept consent in VR. The SDK registers the healthy baselines and automatically disables B before its first participant interaction.
+6. Grab/release only A for practice. B must remain ungrabbable.
 7. Make three distinct near-B pinch attempts. Wait for actual Gemini/firewall/restore/ACK processing; do not manually restore.
 8. Perform a fresh B grab, place it in the drop zone, choose difficulty and submit. Keep Play running until the report is generated.
+
+When the HUD says Gemini is diagnosing, stop pinching, release every object and keep Play plus both tracked hands active. RC6 sends Gemini only a compact whitelist of server-verified evidence; raw pose telemetry and participant text are excluded. The exact three verified failures remain pinned for at most 240 seconds across safe retries, while each individual diagnosis call remains limited to 60 seconds. Do not press STOP unless the participant truly intends to terminate the run.
 
 A new Play run requires a new server session. Pending data are replayed on network reconnection within the same run; app-restart resumption is deliberately blocked to avoid applying stale physical-state commands. Full local JSONL and server raw logs remain available.
 

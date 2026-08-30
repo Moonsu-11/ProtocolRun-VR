@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from protocolrun.api import create_app
-from protocolrun.domain import Ack, Protocol, acknowledge, apply_proposal, eligible, ingest, new_session
+from protocolrun.domain import Ack, Protocol, acknowledge, apply_proposal, eligible, evidence, ingest, new_session
 from protocolrun.store import SQLiteStore
 
 ADMIN = "researcher-test-token-32-characters-minimum"
@@ -79,6 +79,24 @@ def test_auth_and_redaction(setup):
     assert not {"token_hash", "diagnosis", "audit", "survey"}.intersection(body)
     assert "token_hash" not in json.dumps(c.get("/api/sessions", headers=admin).json())
     assert c.get(f"/api/sessions/{sid}/client", headers=admin).status_code == 401
+
+
+def test_agent_busy_is_visible_without_exposing_job_to_participant(setup):
+    c, store, sid, token, admin = setup
+    store.update(sid, lambda s, _: s.update(lease={"id": "lease", "job": "diagnosis", "expires_at": time.time() + 180}))
+    researcher = c.get(f"/api/sessions/{sid}", headers=admin).json()
+    participant = c.get(f"/api/sessions/{sid}/client", headers=token).json()
+    assert researcher["agent_busy"] is True and researcher["agent_job"] == "diagnosis"
+    assert participant["agent_busy"] is True and "agent_job" not in participant
+
+
+def test_pending_diagnosis_stays_paused_between_agent_retries(setup):
+    c, store, sid, token, admin = setup
+    store.update(sid, lambda s, _: s.update(needs_diagnosis=True, lease=None))
+    researcher = c.get(f"/api/sessions/{sid}", headers=admin).json()
+    participant = c.get(f"/api/sessions/{sid}/client", headers=token).json()
+    assert researcher["agent_busy"] is True and researcher["agent_job"] == "diagnosis"
+    assert participant["agent_busy"] is True and "agent_job" not in participant
 
 
 def test_full_closed_loop_and_exports(setup):
@@ -196,18 +214,57 @@ def test_adk_failure_is_not_fake_recovery():
 
 
 def test_adk_tool_wiring_without_model_call(monkeypatch):
+    from types import SimpleNamespace
     from protocolrun.agents import ADKAgents
     agents = ADKAgents()
-    async def inspect(agent, prompt):
-        assert [a.name for a in agent.sub_agents] == ["diagnosis", "recovery"]
-        evidence = agent.sub_agents[0].tools[0]()
-        assert evidence == {"recent_events": []}
-        result = agent.sub_agents[1].tools[0]("manual_review", "insufficient_evidence", [], "No evidence")
+    snapshot = {
+        "protocol": {"adapter": "meta_hands", "target_id": "CUBE_B", "failure_threshold": 3,
+                     "allowed_actions": ["restore_hand_grab_baseline"], "untrusted_extra": "drop-me"},
+        "registered_baselines": {"CUBE_B": {"hand_grab_count": 1, "enabled_hand_grab_count": 0,
+                                               "companion_grab_count": 1, "enabled_companion_grab_count": 0,
+                                               "restore_allowed": True, "head_position": [1, 2, 3]}},
+        "recovery_candidate": {"server_verified": False},
+        "qualifying_failure_events": [{
+            "event_id": "failure-1", "seq": 9, "occurred_at": "2026-08-30T00:00:00Z",
+            "kind": "grab_failed", "data": {"object_id": "CUBE_B", "attempt_id": "attempt-1",
+                                                    "tracked": True, "near_target": True,
+                                                    "head_position": [1, 2, 3], "hand_rotation": [0, 0, 0, 1],
+                                                    "text": "PARTICIPANT_PRIVATE_TEXT"}
+        }],
+        "recent_events": [{"event_id": "telemetry-1", "kind": "telemetry",
+                           "data": {"head_position": [1, 2, 3], "text": "PARTICIPANT_PRIVATE_TEXT"}}],
+    }
+    async def inspect(agent, prompt, **kwargs):
+        assert agent.name == "diagnosis_recovery" and len(agent.tools) == 1
+        assert "SERVER EVIDENCE JSON" in prompt and "server_verified" in prompt
+        supplied = json.loads(prompt.split("\n", 1)[1])
+        assert supplied["qualifying_failure_events"][0]["data"] == {
+            "object_id": "CUBE_B", "attempt_id": "attempt-1", "tracked": True, "near_target": True
+        }
+        assert supplied["context_events"] == []
+        assert "head_position" not in prompt and "hand_rotation" not in prompt
+        assert "PARTICIPANT_PRIVATE_TEXT" not in prompt and "untrusted_extra" not in prompt
+        config = agent.generate_content_config.tool_config.function_calling_config
+        assert str(config.mode).endswith("ANY") and config.allowed_function_names == ["propose_recovery"]
+        context = SimpleNamespace(actions=SimpleNamespace(skip_summarization=None))
+        result = agent.tools[0]("manual_review", "insufficient_evidence", [], "No evidence", context)
         assert result["accepted_for_firewall_review"] is True
+        assert context.actions.skip_summarization is True
+        assert kwargs == {"max_llm_calls": 2}
         return ""
     monkeypatch.setattr(agents, "_run", inspect)
-    result = asyncio.run(agents.diagnose({"recent_events": []}))
-    assert result["mode"] == "google-adk" and len(result["tool_calls"]) == 2
+    result = asyncio.run(agents.diagnose(snapshot))
+    assert result["mode"] == "google-adk" and len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["tool"] == "propose_recovery"
+    assert result["model_payload_bytes"] < result["input_bytes"]
+
+
+def test_adk_skip_summarization_marks_tool_response_final():
+    from google.adk.events import Event, EventActions
+
+    event = Event(author="diagnosis_recovery",
+                  actions=EventActions(skip_summarization=True))
+    assert event.is_final_response() is True
 
 
 def test_retest_wrong_target_or_bad_mask_cannot_verify(setup):
@@ -267,11 +324,14 @@ def me(seq, kind, **data):
 def mr(ctx):
     events = [me(1,'consent',accepted=True,version='demo-consent-v1')]
     events += [me(i,'object_registered',**md(oid)) for i,oid in enumerate(['CUBE_A','CUBE_B','CUBE_C'],2)]
-    events += [me(5,'equipment_ready',left_tracked=True,right_tracked=True), me(6,'grab_success',**md('CUBE_A')),
-               me(7,'released',**md('CUBE_A')), me(8,'grab_success',**md()), me(9,'released',**md()),
-               me(10,'practice_completed'),me(11,'target_found',**md())]
+    events += [me(5,'fault_injected',**md(healthy=False,source='protocol_start')),
+               me(6,'equipment_ready',left_tracked=True,right_tracked=True), me(7,'grab_success',**md('CUBE_A')),
+               me(8,'released',**md('CUBE_A')), me(9,'practice_completed'),
+               me(10,'telemetry',**md(healthy=False)), me(11,'target_found',**md(healthy=False))]
     r=send(ctx,events); assert r.status_code==200,r.text
-    assert ctx[1].get('sessions',ctx[2])['step']==3
+    state=ctx[1].get('sessions',ctx[2])
+    assert state['step']==3 and state['practice_released']==['CUBE_A']
+    assert state['objects']['CUBE_B']['enabled_hand_grab_count']==1
 
 def mf(ctx, **changes):
     events=[]
@@ -357,10 +417,93 @@ def test_meta_healthy_observation_supersedes_failure(meta_setup):
 def test_meta_old_offline_failures_cannot_trigger_live_repair(meta_setup):
     mr(meta_setup);mf(meta_setup)
     def age(s,_):
+        s['diagnosis_started_at'] = time.time() - 241
+        for e in s['failure_evidence']:
+            e['received_at'] = time.time() - 241
+            e['occurred_at']='2020-01-01T00:00:00Z'
         for e in s['recent']:
-            if e['kind']=='grab_failed': e['occurred_at']='2020-01-01T00:00:00Z'
+            if e['kind']=='grab_failed':
+                e['received_at'] = time.time() - 241
+                e['occurred_at']='2020-01-01T00:00:00Z'
     meta_setup[1].update(meta_setup[2],age);tick(meta_setup)
     assert not meta_setup[1].get('sessions',meta_setup[2])['commands']
+
+
+def test_meta_verified_failures_are_pinned_during_bounded_diagnosis(meta_setup):
+    class CaptureMeta(MetaTestAgents):
+        async def diagnose(self, snapshot):
+            candidate = snapshot['recovery_candidate']
+            assert candidate['server_verified'] is True
+            assert candidate['distinct_failed_attempt_count'] == 3
+            assert set(candidate['qualifying_failure_event_ids']) == set(pinned)
+            return {'action': 'restore_hand_grab_baseline', 'category': 'disabled_hand_grab',
+                    'summary': 'Pinned server-verified failures remained valid during the diagnosis cycle.',
+                    'evidence_ids': candidate['qualifying_failure_event_ids']}
+
+    mr(meta_setup); mf(meta_setup)
+    c, store, sid, token, admin = meta_setup
+    state = store.get('sessions', sid)
+    pinned = state['diagnosis_evidence_ids']
+    assert len(pinned) == 3 and state['diagnosis_started_at'] is not None
+
+    def age_within_cycle(s, _):
+        s['diagnosis_started_at'] = time.time() - 130
+        for event in s['failure_evidence']:
+            event['received_at'] = time.time() - 130
+            event['occurred_at'] = '2020-01-01T00:00:00Z'
+        for event in s['recent']:
+            if event['kind'] == 'grab_failed':
+                event['received_at'] = time.time() - 130
+                event['occurred_at'] = '2020-01-01T00:00:00Z'
+    store.update(sid, age_within_cycle)
+    assert {event['event_id'] for event in evidence(store.get('sessions', sid), time.time())} == set(pinned)
+
+    live = TestClient(create_app(store=store, agents=CaptureMeta(), admin_token=ADMIN))
+    ctx = live, store, sid, token, admin
+    assert tick(ctx).status_code == 200
+    assert next_command(ctx)['action'] == 'pause'
+
+
+def test_meta_pinned_failures_expire_after_diagnosis_lifecycle(meta_setup):
+    mr(meta_setup); mf(meta_setup)
+    store, sid = meta_setup[1:3]
+
+    def expire_cycle(s, _):
+        s['diagnosis_started_at'] = time.time() - 241
+        for event in s['failure_evidence']:
+            event['received_at'] = time.time() - 241
+            event['occurred_at'] = '2020-01-01T00:00:00Z'
+    store.update(sid, expire_cycle)
+    assert evidence(store.get('sessions', sid), time.time()) == []
+
+
+def test_meta_failure_evidence_survives_rolling_telemetry_window(meta_setup):
+    class CaptureMeta(MetaTestAgents):
+        async def diagnose(self, snapshot):
+            candidate = snapshot['recovery_candidate']
+            assert candidate['server_verified'] is True
+            assert candidate['reason'] == 'verified_disabled_hand_grab_paths'
+            assert candidate['distinct_failed_attempt_count'] == 3
+            assert len(snapshot['qualifying_failure_events']) == 3
+            return {'action': 'restore_hand_grab_baseline', 'category': 'disabled_hand_grab',
+                    'summary': 'Server-verified paired failures retained during diagnosis.',
+                    'evidence_ids': candidate['qualifying_failure_event_ids']}
+
+    mr(meta_setup); mf(meta_setup)
+    # More than 60 telemetry records used to evict all failed-attempt evidence before
+    # a real Gemini response returned, forcing an incorrect manual review.
+    seq = 18
+    telemetry = [me(i, 'telemetry', **md(healthy=False)) for i in range(seq, seq + 80)]
+    for start in range(0, len(telemetry), 25):
+        assert send(meta_setup, telemetry[start:start + 25]).status_code == 200
+    state = meta_setup[1].get('sessions', meta_setup[2])
+    assert not any(e['kind'] == 'grab_failed' for e in state['recent'])
+
+    c, store, sid, token, admin = meta_setup
+    live = TestClient(create_app(store=store, agents=CaptureMeta(), admin_token=ADMIN))
+    ctx = live, store, sid, token, admin
+    assert tick(ctx).status_code == 200
+    assert next_command(ctx)['action'] == 'pause'
 
 
 def test_bundled_console_is_public_but_contains_no_credentials(setup):

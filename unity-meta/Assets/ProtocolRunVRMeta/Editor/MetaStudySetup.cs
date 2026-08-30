@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using Oculus.Interaction.Input;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -25,6 +26,17 @@ namespace ProtocolRunVR.MetaHands.Editor
             Undo.RecordObject(session, "Configure ProtocolRun session");
             session.studyObjects = objects;
             if (Camera.main) session.head = Camera.main.transform;
+            var rigHands = UnityEngine.Object.FindObjectsByType<Hand>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
+                .Where(h => h && h.GetType() == typeof(Hand)).ToArray();
+            var left = rigHands.FirstOrDefault(h => h.gameObject.name == "ComprehensiveInteractorsLeft")
+                ?? rigHands.FirstOrDefault(h => h.gameObject.name.IndexOf("Left", StringComparison.OrdinalIgnoreCase) >= 0);
+            var right = rigHands.FirstOrDefault(h => h.gameObject.name == "ComprehensiveInteractorsRight")
+                ?? rigHands.FirstOrDefault(h => h.gameObject.name.IndexOf("Right", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (left && right && left != right)
+            {
+                session.leftHandSource = left;
+                session.rightHandSource = right;
+            }
             if (!session.hud)
             {
                 var go = new GameObject("ProtocolRunHUD"); Undo.RegisterCreatedObjectUndo(go, "Create study HUD");
@@ -92,7 +104,7 @@ namespace ProtocolRunVR.MetaHands.Editor
             EditorGUILayout.LabelField("Pending events", session.PendingCount.ToString());
             using (new EditorGUI.DisabledScope(!session.CanInjectFault || !session.Target || !session.Target.CanInject))
                 if (GUILayout.Button("RESEARCHER DEMO: Inject B fault")) session.InjectDemoFault();
-            EditorGUILayout.HelpBox("Inject only during the target approach/grab step, after A and B practice. Do not manually restore during the server demo. Wait for Gemini and a fresh same-object retest.", MessageType.Info);
+            EditorGUILayout.HelpBox("meta-hands-v1 automatically disables B immediately after consent. Practice only with A. Do not manually restore B; wait for Gemini, the firewall and a fresh same-object retest.", MessageType.Info);
             Repaint();
         }
     }

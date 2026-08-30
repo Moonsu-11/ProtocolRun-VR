@@ -19,7 +19,7 @@ def verify(url, token):
     health = json.loads(get('/healthz', False))
     runtime = json.loads(get('/api/runtime'))
     protocols = json.loads(get('/api/protocols'))['protocols']
-    assert health['version'] == '0.4.0-rc2', 'Unexpected server version'
+    assert health['version'] == '0.5.0-rc6', 'Unexpected server version'
     assert any(p['id'] == 'meta-hands-v1' and p['adapter'] == 'meta_hands' for p in protocols)
     assert '<html lang="en">' in get('/console/', False)
     print(json.dumps({'server': url, 'version': health['version'], 'store': runtime['store'], 'cloud_run': runtime['cloud_run'],

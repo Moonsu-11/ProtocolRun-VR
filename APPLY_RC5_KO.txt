@@ -1,0 +1,12 @@
+ProtocolRun-VR 0.5.0 RC5 적용 안내
+
+1. Unity Play와 기존 서버 창을 모두 종료합니다.
+2. RC5 ZIP의 파일을 ProtocolRun-VR 저장소 루트에 덮어씁니다.
+3. 프로젝트 루트에서 VERIFY_GEMINI_TOOL_WINDOWS.bat를 실행합니다.
+4. [PASS], Tool: propose_recovery, Action: restore_hand_grab_baseline을 확인합니다.
+5. 정리 오류가 있으면 배치가 최종 [FAIL]로 처리합니다. 최종 문구가 Gemini Tool Calling is ready인지 확인합니다.
+6. 위 조건을 모두 만족하면 RUN_LOCAL_WINDOWS.bat를 실행합니다.
+7. 대시보드에서 0.5.0-rc5를 확인하고 meta-hands-v1 새 세션을 만듭니다.
+8. 새 연결 JSON을 Unity에 넣은 뒤 Quest Link와 Unity Play를 시작합니다.
+
+검사 중에는 Unity 명령이 실행되지 않습니다. API 키나 연구자 토큰을 채팅 또는 GitHub에 올리지 마세요.

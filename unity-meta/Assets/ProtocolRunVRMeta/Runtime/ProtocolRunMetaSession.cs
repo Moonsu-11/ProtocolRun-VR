@@ -23,16 +23,18 @@ namespace ProtocolRunVR.MetaHands
         public bool Consented { get; private set; }
         public bool Blocked { get; private set; }
         public bool Connected { get; private set; }
-        public bool StudyPaused => Blocked || Current == null || !Consented || Current.status == "recovering" || Current.status == "manual_review" || Current.status == "completed";
+        public bool StudyPaused => Blocked || Current == null || !Consented || Current.agent_busy || Current.status == "recovering" || Current.status == "manual_review" || Current.status == "completed";
         public string ConnectionStatus { get; private set; } = "Configure connection before Play.";
         public string Instruction => Blocked ? ConnectionStatus : Current == null ? "Waiting for server connection." :
             !Consented ? "Demo consent: upload anonymous hand poses, interactions and survey. No audio/video. Pinch near AGREE to begin." :
+            Current.agent_busy ? "Failure evidence received. Gemini is diagnosing. Keep both hands visible and release all objects." :
             Current.status == "recovering" ? "Release all objects. Checking equipment. Please wait." :
             Current.status == "manual_review" ? "Study paused. Please contact the researcher." : Current.current_step.instruction;
         public static string ConnectionPath => Path.Combine(Application.persistentDataPath, "ProtocolRunVR", "connection.json");
         public int PendingCount => disk == null ? 0 : disk.pending.Count;
         public bool HasTrackedHand => leftTracked || rightTracked;
-        public bool CanInjectFault => !StudyPaused && Current.protocol.demo_faults_allowed && (Current.step == 2 || Current.step == 3);
+        public bool CanInjectFault => !StudyPaused && Current.protocol.demo_faults_allowed
+            && ((Current.protocol.auto_inject_target_fault && Current.step == 0) || Current.step == 2 || Current.step == 3);
         private MetaConnection connection;
         private MetaDiskState disk;
         private IHand left, right;
@@ -51,10 +53,10 @@ namespace ProtocolRunVR.MetaHands
             if (!head && Camera.main) head = Camera.main.transform;
             if (studyObjects == null || studyObjects.Length == 0)
                 studyObjects = FindObjectsByType<ProtocolRunMetaObject>(FindObjectsSortMode.None);
-            var sources = FindObjectsByType<MonoBehaviour>(FindObjectsSortMode.None)
-                .Where(m => m.GetType() == typeof(Hand)).ToArray();
-            if (!leftHandSource) leftHandSource = UniqueHand(sources, Handedness.Left);
-            if (!rightHandSource) rightHandSource = UniqueHand(sources, Handedness.Right);
+            var sources = FindObjectsByType<MonoBehaviour>(FindObjectsInactive.Exclude, FindObjectsSortMode.None)
+                .Where(m => m is IHand).ToArray();
+            if (!(leftHandSource is IHand)) leftHandSource = PreferredHand(sources, Handedness.Left, "ComprehensiveInteractorsLeft");
+            if (!(rightHandSource is IHand)) rightHandSource = PreferredHand(sources, Handedness.Right, "ComprehensiveInteractorsRight");
             left = leftHandSource as IHand; right = rightHandSource as IHand;
             if (left == null || right == null || left == right || !head)
             { StopStudy("Assign one left/right Meta Hand source and the HMD camera on Meta Network Session."); yield break; }
@@ -98,10 +100,17 @@ namespace ProtocolRunVR.MetaHands
             StartCoroutine(FlushLoop()); StartCoroutine(PollLoop()); StartCoroutine(AgentLoop());
         }
 
-        private static MonoBehaviour UniqueHand(MonoBehaviour[] sources, Handedness side)
+        private static MonoBehaviour PreferredHand(MonoBehaviour[] sources, Handedness side, string preferredObjectName)
         {
+            var named = sources.Where(m => m.GetType() == typeof(Hand)
+                && m.gameObject.name == preferredObjectName).ToArray();
+            if (named.Length == 1) return named[0];
             var matches = sources.Where(m => ((IHand)m).Handedness == side).ToArray();
-            return matches.Length == 1 ? matches[0] : null;
+            if (matches.Length == 1) return matches[0];
+            // The comprehensive Meta rig exposes several processed IHand stages.
+            // Prefer the concrete Hand stage used by its interactors and visuals.
+            var concrete = matches.Where(m => m.GetType() == typeof(Hand)).ToArray();
+            return concrete.Length == 1 ? concrete[0] : null;
         }
         public static bool ValidConnection(MetaConnection c)
         {
@@ -133,7 +142,7 @@ namespace ProtocolRunVR.MetaHands
             if (Blocked || Current == null || !Consented) return;
             if (!StudyPaused && Current.step == 0 && leftTracked && rightTracked && !equipmentSent)
             { equipmentSent = true; Emit("equipment_ready", new MetaEventData { left_tracked = true, right_tracked = true }); }
-            if (!StudyPaused && Current.step == 1 && !practiceSent && practiced.Contains(Current.protocol.practice_id) && practiced.Contains(Current.protocol.target_id))
+            if (!StudyPaused && Current.step == 1 && !practiceSent && practiced.Contains(Current.protocol.practice_id))
             { practiceSent = true; Emit("practice_completed"); }
             var target = Target;
             if (!StudyPaused && Current.step == 2 && !foundSent && target)
@@ -222,6 +231,8 @@ namespace ProtocolRunVR.MetaHands
             Consented = true;
             Emit("consent", new MetaEventData { accepted = true, version = "demo-consent-v1", source = "participant_button" });
             foreach (var o in studyObjects) Emit("object_registered", Data(o));
+            if (Current.protocol.auto_inject_target_fault && (!Target || !Target.InjectProtocolStartFault()))
+                StopStudy("The protocol could not place CUBE_B into its required initial fault state. Restart with a new session.");
         }
         public void HelpGrab() { if (Consented) Emit("help_request", new MetaEventData { object_id = Current.protocol.target_id, text = "I cannot pick up the object.", source = "participant_button" }); }
         public void PauseStudy() { if (Consented) { Emit("pause_request", new MetaEventData { source = "participant_button" }); StopStudy("Participant requested a pause. Researcher review required."); } }
@@ -324,7 +335,7 @@ namespace ProtocolRunVR.MetaHands
             {
                 req.downloadHandler = new DownloadHandlerBuffer();
                 if (json != null) { req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json)); req.SetRequestHeader("Content-Type", "application/json"); }
-                req.SetRequestHeader("Authorization", "Bearer " + connection.session_token); req.timeout = agent ? 65 : 15;
+                req.SetRequestHeader("Authorization", "Bearer " + connection.session_token); req.timeout = agent ? 150 : 15;
                 double started = Time.realtimeSinceStartupAsDouble;
                 yield return req.SendWebRequest();
                 if (req.result == UnityWebRequest.Result.Success)

@@ -198,7 +198,7 @@ namespace ProtocolRunVR
                 req.downloadHandler = new DownloadHandlerBuffer();
                 if (json != null) { req.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(json)); req.SetRequestHeader("Content-Type", "application/json"); }
                 req.SetRequestHeader("Authorization", "Bearer " + sessionToken);
-                req.timeout = agent ? 65 : 15;
+                req.timeout = agent ? 150 : 15;
                 yield return req.SendWebRequest();
                 if (req.result == UnityWebRequest.Result.Success)
                 {

@@ -1,0 +1,19 @@
+ProtocolRun-VR 0.5.0 RC4 적용 안내
+
+이 ZIP은 0.5.0 RC3 위에 덮어쓰는 업데이트입니다.
+
+1. 현재 세션이 manual_review로 끝나면 Unity와 RUN_LOCAL_WINDOWS.bat을 종료합니다.
+2. ZIP 내부 파일과 폴더를 다음 저장소 루트에 덮어씁니다.
+   C:\Users\user\Documents\GitHub\ProtocolRun-VR
+3. VERIFY_GEMINI_TOOL_WINDOWS.bat을 먼저 실행합니다.
+4. 실제 propose_recovery Tool 호출과 소요 시간이 [PASS]로 출력되는지 확인합니다.
+5. PASS일 때만 RUN_LOCAL_WINDOWS.bat을 다시 실행합니다.
+6. 대시보드 런타임이 0.5.0-rc4인지 확인합니다.
+7. meta-hands-v1 새 세션과 새 연결 JSON을 만듭니다.
+8. Unity Play에서 START → A 잡고 놓기 → B 핀치/완전 해제를 세 번 반복합니다.
+9. Gemini 진단 중에는 B를 다시 잡거나 HELP/STOP을 누르지 않습니다.
+10. retest · 1 recovery attempt가 표시된 뒤 B를 잡습니다.
+
+RC4의 핵심은 한 번의 Gemini 판단과 한 번의 실제 propose_recovery Tool 호출입니다.
+Tool 제안은 Protocol Firewall이 다시 검증하며, 허용된 기준 상태 복원만 Unity에 전달됩니다.
+VERIFY_GEMINI_TOOL_WINDOWS.bat은 실제 Google API를 호출하지만 Unity 명령은 실행하지 않는 연결 검증입니다.

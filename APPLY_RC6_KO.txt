@@ -1,0 +1,13 @@
+ProtocolRun-VR 0.5.0 RC6 적용 안내
+
+1. Unity Play와 기존 서버 창을 모두 종료합니다.
+2. RC6 ZIP의 파일을 ProtocolRun-VR 저장소 루트에 덮어씁니다.
+3. 프로젝트 루트에서 VERIFY_GEMINI_TOOL_WINDOWS.bat를 실행합니다.
+4. [PASS], Tool: propose_recovery, Action: restore_hand_grab_baseline을 확인합니다.
+5. Payload: 원본 -> compact bytes와 Elapsed가 출력되고, 정리 오류 없이 Gemini Tool Calling is ready로 끝나야 합니다.
+6. 이 검사가 실패하면 Quest를 다시 실행하지 말고 전체 출력만 공유합니다. API 키는 공유하지 않습니다.
+7. 검사가 통과하면 RUN_LOCAL_WINDOWS.bat를 실행합니다.
+8. 대시보드에서 0.5.0-rc6를 확인하고 meta-hands-v1 새 세션을 만듭니다.
+9. 새 연결 JSON을 Unity에 적용한 뒤 Quest Link와 Unity Play를 시작합니다.
+
+검사 중에는 Unity 명령이 실행되지 않습니다. RC6는 Gemini 호출 제한 60초를 늘리지 않고, 실제 운영 형태 입력을 서버 검증 필드로 압축해 검사합니다.

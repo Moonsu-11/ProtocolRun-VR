@@ -21,7 +21,7 @@ No user GitHub repository has been created or pushed by this release. Create a r
 
 - 0:00–0:25: problem, three cube roles, explicit deliberately injected demo fault.
 - 0:25–0:55: Cloud Run running backend and Firestore; avoid secrets. Show scene/protocol and participant consent.
-- 0:55–1:35: normal A/B hand grabs, release, inject B fault, multiple real failed pinch attempts and participant help.
+- 0:55–1:35: A normal hand grab, B failing from its first participant attempt, multiple real failed pinches and participant help. Explain that the SDK registered B's healthy component baseline before automatically disabling it.
 - 1:35–2:40: Gemini evidence tool/proposal, deterministic firewall, pause/restore/retest ACKs. Show actual B component restoration and successful new B grab.
 - 2:40–3:25: placement, survey, report/raw export. Confirm C remains non-grabbable and verification was not inferred from a setting change.
 - 3:25–4:00: architecture, failure boundaries, source/run instructions and what was verified.
@@ -34,7 +34,7 @@ Do not splice different sessions into an apparent single successful live cycle. 
 |---|---|
 | Unity 6000.3.16f1 compilation | Pending |
 | Quest 3 Link hand tracking and HUD reachability | Pending |
-| A and B normal grabs; C protected | Pending |
+| A normal; B fails on first participant attempt; C protected | Pending |
 | B fault blocks all captured direct grab paths | Pending |
 | HTTPS Unity → Cloud Run event ingestion | Pending |
 | Firestore transactions and server restart persistence | Pending |

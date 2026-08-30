@@ -23,7 +23,7 @@ namespace ProtocolRunVR.MetaHands
     [AddComponentMenu("ProtocolRun VR/Meta Study Object")]
     public sealed class ProtocolRunMetaObject : MonoBehaviour
     {
-        public const string ModuleVersion = "0.4.0-rc2";
+        public const string ModuleVersion = "0.5.0-rc6";
         [SerializeField] private string objectId;
         [SerializeField] private bool expectedGrabbable = true;
         [SerializeField] private bool allowBaselineRestore;
@@ -127,7 +127,7 @@ namespace ProtocolRunVR.MetaHands
                 view.WhenSelectingInteractorViewRemoved += removed[captured];
             }
             initialized = true;
-            Emit("baseline_captured", "configuration", "Grab and release once in this Play session before fault injection.");
+            Emit("baseline_captured", "configuration", "Healthy component baseline captured before protocol-controlled fault injection.");
         }
 
         private void OnSelection(MonoBehaviour grab, IInteractorView interactor, bool selecting)
@@ -188,8 +188,23 @@ namespace ProtocolRunVR.MetaHands
         [ContextMenu("ProtocolRun / DEMO Inject Hand Grab Fault")]
         public void InjectDemoFault()
         {
-            if (!Application.isPlaying || !CanInject) { Reject("Injection denied: enable demo/restore permissions before Play, then grab and release once."); return; }
-            if (!BaselineMatches() || AnyActualSelection()) { Reject("Injection denied: changed baseline, missing components, or object currently held."); return; }
+            InjectFault("researcher_demo", false);
+        }
+
+        public bool InjectProtocolStartFault()
+        {
+            return InjectFault("protocol_start", true);
+        }
+
+        private bool InjectFault(string source, bool approveCapturedBaseline)
+        {
+            if (approveCapturedBaseline && gate != null && gate.Phase == RecoveryPhase.Warmup)
+            {
+                try { gate.ApproveCapturedBaselineForAutomaticFault(); }
+                catch (Exception error) { Reject("Automatic fault denied: " + error.Message); return false; }
+            }
+            if (!Application.isPlaying || !CanInject) { Reject("Injection denied by the protocol, object identity, or local recovery phase."); return false; }
+            if (!BaselineMatches() || AnyActualSelection()) { Reject("Injection denied: changed baseline, missing components, or object currently held."); return false; }
             changing = true;
             try
             {
@@ -199,9 +214,10 @@ namespace ProtocolRunVR.MetaHands
                     throw new InvalidOperationException("A direct grab path did not disable.");
                 gate.ConfirmInjection();
             }
-            catch (Exception error) { Block("Injection failed: " + error.Message); return; }
+            catch (Exception error) { Block("Injection failed: " + error.Message); return false; }
             finally { changing = false; }
-            Emit("fault_injected", "researcher_demo", "Disabled captured HandGrabInteractable and GrabInteractable paths. Collider, Rigidbody and object pose were not edited.");
+            Emit("fault_injected", source, "Disabled captured HandGrabInteractable and GrabInteractable paths. Collider, Rigidbody and object pose were not edited.");
+            return true;
         }
 
         [ContextMenu("ProtocolRun / DEMO Restore Baseline")]

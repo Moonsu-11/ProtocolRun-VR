@@ -50,8 +50,13 @@ def observe_meta(s, e, now):
             raise ValueError("invalid_healthy_grab_baseline")
         s["objects"][oid] = {k: d[k] for k in fields + ["run_id", "baseline_id", "expected_grabbable", "restore_allowed"]}
         s["objects"][oid]["registration_event_id"] = e["event_id"]
-    if kind == "fault_injected" and (not p["demo_faults_allowed"] or d.get("object_id") != p["target_id"]):
-        raise ValueError("demo_fault_not_permitted")
+    if kind == "fault_injected":
+        if not p["demo_faults_allowed"] or d.get("object_id") != p["target_id"]:
+            raise ValueError("demo_fault_not_permitted")
+        if (not identity_matches(s, d) or d.get("baseline_match") is not False
+                or d.get("collider_enabled") is not True or d.get("held") is not False
+                or d.get("enabled_hand_grab_count") != 0 or d.get("enabled_companion_grab_count") != 0):
+            raise ValueError("fault_event_does_not_match_registered_target")
     if kind == "grab_attempt":
         aid = d.get("attempt_id")
         if not isinstance(aid, str) or not re.fullmatch(r"[a-f0-9]{32}", aid) or aid in s["meta_attempts"]:
@@ -63,7 +68,7 @@ def observe_meta(s, e, now):
         if not a or a["failed"] or a["seq"] >= e["seq"] or any(a["data"].get(k) != d.get(k) for k in ["object_id", "run_id", "baseline_id", "hand"]):
             raise ValueError("failure_requires_distinct_matching_attempt")
         a["failed"] = True
-    if s["step"] == 1 and s["status"] == "running" and d.get("object_id") in {p["practice_id"], p["target_id"]}:
+    if s["step"] == 1 and s["status"] == "running" and d.get("object_id") == p["practice_id"]:
         oid = d["object_id"]
         if kind == "grab_success" and d.get("source") == "sdk_selection" and d.get("tracked") is True and matches_baseline(s, d):
             if oid not in s["practice_grabbed"]:
@@ -82,19 +87,32 @@ def technical_failure(s, d):
             and type(distance) in (float, int) and math.isfinite(distance) and 0 <= distance <= s["protocol"]["near_distance_m"])
 
 
-def eligible_meta(s, evs, ids, now):
-    target = s["protocol"]["target_id"]
-    if target not in s["practice_released"] or target not in s["objects"]:
-        return False, "no_verified_normal_baseline"
+def meta_evidence(s, evs, now, pinned_ids=None):
+    """Return only server-verified, paired Meta attempt/failure evidence.
+
+    The records come from the bounded failure buffer rather than the rolling telemetry
+    window, so a real Gemini call cannot lose the three failures while it is running.
+    """
     qualifying = []
+    pinned_ids = pinned_ids or set()
     for e in evs:
         a = s["meta_attempts"].get(e["data"].get("attempt_id"))
         try:
             age = now - datetime.fromisoformat(e["occurred_at"].replace("Z", "+00:00")).timestamp()
         except (ValueError, TypeError):
             continue
-        if -5 <= age <= 90 and a and technical_failure(s, a["data"]) and technical_failure(s, e["data"]):
+        if (-5 <= age <= 90 or e["event_id"] in pinned_ids) and a and a.get("failed") and technical_failure(s, a["data"]) and technical_failure(s, e["data"]):
             qualifying.append(e)
+    return qualifying
+
+
+def eligible_meta(s, evs, ids, now, pinned_ids=None):
+    target = s["protocol"]["target_id"]
+    baseline = s["objects"].get(target)
+    if (not baseline or baseline.get("hand_grab_count", 0) <= 0
+            or baseline.get("enabled_hand_grab_count") != baseline.get("hand_grab_count")):
+        return False, "no_registered_healthy_baseline"
+    qualifying = meta_evidence(s, evs, now, pinned_ids)
     if len({e["data"]["attempt_id"] for e in qualifying}) < s["protocol"]["failure_threshold"] or not set(ids).issubset({e["event_id"] for e in qualifying}):
         return False, "insufficient_disabled_hand_grab_evidence"
     last_bad = max(e["seq"] for e in qualifying)
@@ -120,7 +138,7 @@ def meta_completion(s, kind, d):
         return (s["consent"] is not None and len(s["objects"]) == 3
                 and d.get("left_tracked") is True and d.get("right_tracked") is True)
     if kind == "practice_completed":
-        return {p["practice_id"], p["target_id"]}.issubset(s["practice_released"])
+        return p["practice_id"] in s["practice_released"]
     if kind == "target_found":
         return identity_matches(s, d) and d.get("tracked") is True and d.get("near_target") is True
     if kind == "grab_success":

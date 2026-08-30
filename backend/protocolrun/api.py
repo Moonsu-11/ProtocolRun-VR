@@ -20,8 +20,8 @@ from pydantic import Field
 
 from .agents import ADKAgents
 from .domain import (Ack, EventBatch, Protocol, StrictModel, acknowledge, apply_proposal,
-                     audit, expire_commands, ingest, manual_review, new_session,
-                     public_session, report, uid, meta_protocol)
+                     audit, eligible, evidence, expire_commands, ingest, manual_review,
+                     new_session, public_session, recovery_action, report, uid, meta_protocol)
 from .store import FirestoreStore, SQLiteStore
 
 log = logging.getLogger("protocolrun")
@@ -43,7 +43,7 @@ def create_app(store=None, agents=None, admin_token=None):
                 raise RuntimeError("Cloud Run requires PRVR_STORE=firestore; local SQLite is not durable there.")
             store = SQLiteStore(os.environ.get("PRVR_SQLITE_PATH", "protocolrun.sqlite3"))
     agents = agents or ADKAgents()
-    app = FastAPI(title="ProtocolRun-VR", version="0.4.0-rc2", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="ProtocolRun-VR", version="0.5.0-rc6", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=[x.strip() for x in os.environ.get("PRVR_CORS_ORIGINS", "http://localhost:5173").split(",") if x.strip()],
                        allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
@@ -182,7 +182,7 @@ def create_app(store=None, agents=None, admin_token=None):
                 return
             if now - state.get("last_agent_at", 0) < 15 or state.get("agent_attempts", {}).get(job, 0) >= 3:
                 return
-            state["lease"] = {"id": lease_id, "job": job, "expires_at": now + 90}
+            state["lease"] = {"id": lease_id, "job": job, "expires_at": now + 180}
             state["last_agent_at"] = now
             state.setdefault("agent_attempts", {})[job] = state.get("agent_attempts", {}).get(job, 0) + 1
             audit(state, "agent_started", {"job": job, "mode": agents.mode}, now)
@@ -192,12 +192,26 @@ def create_app(store=None, agents=None, admin_token=None):
         job = claimed["lease"]["job"]
         try:
             if job == "diagnosis":
+                failure_events = evidence(claimed, time.time())
+                failure_ids = [e["event_id"] for e in failure_events]
+                candidate_ok, candidate_reason = eligible(claimed, time.time(), failure_ids) if failure_ids else (False, "no_qualifying_failure_events")
+                recent_context = [e for e in claimed["recent"]
+                                  if e["kind"] in ["grab_success", "help_request", "telemetry"]][-12:]
                 snapshot = {"protocol": claimed["protocol"], "step": claimed["step"],
-                            "registered_baselines": claimed.get("objects", {}), "normal_grab_release_objects": claimed.get("practice_released", []),
-                            "recent_events": [e for e in claimed["recent"] if e["kind"] in ["grab_attempt", "grab_failed", "grab_success", "help_request", "telemetry"]]}
-                result = await asyncio.wait_for(agents.diagnose(snapshot), timeout=50)
+                            "registered_baselines": claimed.get("objects", {}), "normal_practice_release_objects": claimed.get("practice_released", []),
+                            "recovery_candidate": {"server_verified": candidate_ok,
+                                                   "reason": candidate_reason,
+                                                   "required_action": recovery_action(claimed),
+                                                   "failure_threshold": claimed["protocol"]["failure_threshold"],
+                                                   "distinct_failed_attempt_count": len({e["data"].get("attempt_id") for e in failure_events}),
+                                                   "qualifying_failure_event_ids": failure_ids},
+                            "qualifying_failure_events": failure_events,
+                            "recent_events": failure_events + recent_context}
+                # Diagnosis is one forced Gemini tool decision. A timeout fails
+                # closed and retries; it never silently restores Unity state.
+                result = await asyncio.wait_for(agents.diagnose(snapshot), timeout=60)
             else:
-                result = await asyncio.wait_for(agents.analyze(report(claimed)), timeout=50)
+                result = await asyncio.wait_for(agents.analyze(report(claimed)), timeout=120)
             def finish(state, _):
                 if not state["lease"] or state["lease"]["id"] != lease_id:
                     return

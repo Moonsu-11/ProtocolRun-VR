@@ -38,6 +38,13 @@ namespace ProtocolRunVR.MetaHands
         public bool CanInject(bool held) => !held && DemoControlsAllowed && RestoreAllowed && Phase == RecoveryPhase.Ready;
         public bool CanRestore(bool held) => !held && RestoreAllowed && Phase == RecoveryPhase.FaultInjected;
 
+        public void ApproveCapturedBaselineForAutomaticFault()
+        {
+            if (Phase != RecoveryPhase.Warmup || !DemoControlsAllowed || !RestoreAllowed)
+                throw new InvalidOperationException("The captured baseline cannot be armed for an automatic fault.");
+            Phase = RecoveryPhase.Ready;
+        }
+
         public void ConfirmInjection()
         {
             if (!CanInject(false)) throw new InvalidOperationException("Injection is not allowed in this phase.");

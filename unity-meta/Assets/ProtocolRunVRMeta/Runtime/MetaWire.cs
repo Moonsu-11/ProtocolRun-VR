@@ -29,7 +29,7 @@ namespace ProtocolRunVR.MetaHands
     {
         public string id, adapter, target_id, practice_id, protected_id;
         public string[] allowed_actions;
-        public bool demo_faults_allowed;
+        public bool demo_faults_allowed, auto_inject_target_fault;
         public float near_distance_m;
     }
     [Serializable] public sealed class MetaStep { public string id, instruction; }
@@ -37,6 +37,7 @@ namespace ProtocolRunVR.MetaHands
     {
         public string id, status, protocol_hash;
         public int step, progress, revision, last_seq;
+        public bool agent_busy;
         public MetaStep current_step;
         public MetaProtocol protocol;
     }

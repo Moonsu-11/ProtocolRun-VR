@@ -53,6 +53,12 @@ namespace ProtocolRunVR.MetaHands.Editor
             Check(b.Phase == RecoveryPhase.RegrabObserved && !b.CanInject(false) && !b.CanRestore(false), "New same-object grab completes the local cycle once.");
             b.Block(); b.ObserveGrab(); b.ObserveRelease();
             Check(b.Phase == RecoveryPhase.Blocked && !b.CanInject(false), "Blocked runs cannot silently resume.");
+
+            var automatic = new RecoveryGate("CUBE_B", true, true, true);
+            automatic.ApproveCapturedBaselineForAutomaticFault();
+            Check(automatic.CanInject(false), "A structurally validated baseline can be armed before participant interaction.");
+            automatic.ConfirmInjection();
+            Check(automatic.Phase == RecoveryPhase.FaultInjected && automatic.CanRestore(false), "The initial automatic fault remains recoverable only to its captured baseline.");
             Debug.Log("[ProtocolRun] Recovery gate checks passed. This does NOT validate the Meta SDK or headset integration.");
         }
 

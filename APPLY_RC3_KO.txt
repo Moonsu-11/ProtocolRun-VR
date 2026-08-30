@@ -1,0 +1,26 @@
+ProtocolRun-VR 0.5.0 RC3 적용 안내
+
+이 ZIP은 0.5.0 RC2 위에 덮어쓰는 업데이트입니다.
+
+1. Unity Play를 종료하고 Unity Editor와 RUN_LOCAL_WINDOWS.bat 창을 닫습니다.
+2. ZIP 내부 파일과 폴더를 다음 저장소 루트에 덮어씁니다.
+   C:\Users\user\Documents\GitHub\ProtocolRun-VR
+3. RUN_LOCAL_WINDOWS.bat을 다시 실행합니다.
+4. 대시보드 왼쪽 런타임 표시가 0.5.0-rc3인지 확인합니다.
+5. 기존 manual_review 세션은 사용하지 않고 meta-hands-v1 새 세션을 만듭니다.
+6. 새 연결 JSON을 Unity에 적용하고 Play를 시작합니다.
+
+재시험 동작
+- START
+- CUBE_A를 한 번 잡고 놓기
+- CUBE_B 가까이에서 핀치 후 손가락 완전히 펴기를 세 번 반복
+- Gemini 진단 중에는 Play/STOP/HELP를 건드리지 않고 양손 추적 유지
+- 상태가 retest로 바뀐 뒤 CUBE_B를 새로 잡기
+
+자동검증 결과
+- Python 서버/정책 테스트: 49 passed
+- 대시보드 테스트: 5 passed
+- 대시보드 lint/build: passed
+- Unity 소스 정적 검사: passed
+
+실제 Quest와 실제 Gemini의 전체 흐름은 이 업데이트를 적용한 뒤 한 번 더 확인해야 합니다.

@@ -11,6 +11,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+DIAGNOSIS_EVIDENCE_TTL_SECONDS = 240
+
+
 def uid() -> str:
     return uuid.uuid4().hex
 
@@ -27,6 +30,7 @@ class Protocol(StrictModel):
     practice_id: str = Field(default="CUBE_A", pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     protected_id: str = Field(default="CUBE_C", pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     demo_faults_allowed: bool = False
+    auto_inject_target_fault: bool = False
     near_distance_m: float = Field(default=0.18, ge=0.03, le=0.3)
     baseline_mask: int = Field(default=1, ge=1, le=2147483647)
     max_recoveries: int = Field(default=1, ge=0, le=3)
@@ -40,14 +44,20 @@ class Protocol(StrictModel):
                 raise ValueError("Target, practice and protected object IDs must differ")
             if any(a != "restore_hand_grab_baseline" for a in self.allowed_actions):
                 raise ValueError("Meta hands permits only baseline component restoration")
-        elif any(a != "restore_interaction_layer" for a in self.allowed_actions):
-            raise ValueError("XRI permits only layer restoration")
+            if self.auto_inject_target_fault and not self.demo_faults_allowed:
+                raise ValueError("Automatic Meta fault injection requires demo_faults_allowed")
+        else:
+            if self.auto_inject_target_fault:
+                raise ValueError("Automatic target fault injection is supported only by the Meta hands adapter")
+            if any(a != "restore_interaction_layer" for a in self.allowed_actions):
+                raise ValueError("XRI permits only layer restoration")
         return self
 
 
 def meta_protocol() -> Protocol:
     return Protocol(id="meta-hands-v1", title="Three-cube hand interaction study", adapter="meta_hands",
-                    target_id="CUBE_B", demo_faults_allowed=True, allowed_actions=["restore_hand_grab_baseline"])
+                    target_id="CUBE_B", demo_faults_allowed=True, auto_inject_target_fault=True,
+                    allowed_actions=["restore_hand_grab_baseline"])
 
 
 def recovery_action(s: dict) -> str:
@@ -59,7 +69,7 @@ def steps(s: dict) -> list[dict]:
         return STEPS
     p = s["protocol"]
     instructions = ["Confirm consent and show both hands.",
-                    f"Grab and release {p['practice_id']} and {p['target_id']} once each.",
+                    f"Grab and release {p['practice_id']} once. Do not practice with {p['target_id']}.",
                     f"Bring your hand close to {p['target_id']}.", f"Pinch to pick up {p['target_id']}.",
                     f"Release {p['target_id']} inside the drop zone.",
                     "Rate task difficulty from 1 (easy) to 7 (hard), then submit."]
@@ -105,6 +115,10 @@ def new_session(protocol: Protocol, token: str, sid: str, now: float | None = No
             "token_hash": hashlib.sha256(token.encode()).hexdigest(), "created_at": now,
             "last_seen": None, "step": 0, "status": "running", "revision": 0,
             "last_seq": 0, "event_count": 0, "recent": [], "commands": [], "audit": [],
+            # Keep bounded failure records outside the rolling UI/event window. Meta telemetry can
+            # otherwise evict the exact attempt/failure evidence while Gemini is still diagnosing.
+            "failure_evidence": [],
+            "diagnosis_evidence_ids": [], "diagnosis_started_at": None,
             "recoveries": 0, "failures": 0, "needs_diagnosis": False,
             "lease": None, "diagnosis": None, "verification": None, "segments": [],
             "step_history": [], "step_started": now, "survey": None, "telemetry": {},
@@ -115,6 +129,10 @@ def new_session(protocol: Protocol, token: str, sid: str, now: float | None = No
 
 def public_session(s: dict, researcher: bool = False) -> dict:
     data = copy.deepcopy(s)
+    diagnosis_pending = bool(data.get("needs_diagnosis")) and data.get("status") == "running"
+    data["agent_busy"] = bool(data.get("lease")) or diagnosis_pending
+    data["agent_job"] = (data.get("lease", {}).get("job") if data.get("lease") else
+                         "diagnosis" if diagnosis_pending else None)
     data.pop("token_hash", None)
     data.pop("lease", None)
     data["current_step"] = steps(s)[s["step"]] if s["step"] < len(STEPS) else {"id": "complete", "instruction": "Study complete. Thank you."}
@@ -122,7 +140,7 @@ def public_session(s: dict, researcher: bool = False) -> dict:
     data["progress"] = round(s["step"] / len(STEPS) * 100)
     if not researcher:
         # No diagnosis, hypothesis, or raw participant answers in the participant response.
-        data = {k: data[k] for k in ["id", "protocol", "protocol_hash", "step", "status", "current_step", "progress", "last_seq", "revision"]}
+        data = {k: data[k] for k in ["id", "protocol", "protocol_hash", "step", "status", "agent_busy", "current_step", "progress", "last_seq", "revision"]}
     return data
 
 
@@ -157,11 +175,27 @@ def manual_review(s: dict, reason: str, now: float) -> None:
         s["segments"].append({"from_seq": start, "to_seq": None, "label": "unresolved_review_required",
                               "exclude_from_primary_analysis": True})
     audit(s, "manual_review", {"reason": reason}, now)
+    s["diagnosis_evidence_ids"] = []
+    s["diagnosis_started_at"] = None
+
+
+def active_diagnosis_evidence_ids(s: dict, now: float) -> set[str]:
+    started = s.get("diagnosis_started_at")
+    ids = s.get("diagnosis_evidence_ids") or []
+    if not ids or not isinstance(started, (int, float)) or not 0 <= now - started <= DIAGNOSIS_EVIDENCE_TTL_SECONDS:
+        return set()
+    return set(ids)
 
 
 def evidence(s: dict, now: float) -> list[dict]:
-    return [e for e in s["recent"] if e["kind"] == "grab_failed" and now - e["received_at"] <= 90
-            and e["data"].get("object_id") == s["protocol"]["target_id"]]
+    pinned = active_diagnosis_evidence_ids(s, now)
+    failures = s.get("failure_evidence") or [e for e in s["recent"] if e["kind"] == "grab_failed"]
+    failures = [e for e in failures if (now - e["received_at"] <= 90 or e["event_id"] in pinned)
+                and e["data"].get("object_id") == s["protocol"]["target_id"]]
+    if s["protocol"].get("adapter") == "meta_hands":
+        from .meta import meta_evidence
+        return meta_evidence(s, failures, now, pinned)
+    return failures
 
 
 def eligible(s: dict, now: float, ids: list[str]) -> tuple[bool, str]:
@@ -175,7 +209,7 @@ def eligible(s: dict, now: float, ids: list[str]) -> tuple[bool, str]:
         return False, "invalid_evidence_references"
     if p.get("adapter") == "meta_hands":
         from .meta import eligible_meta
-        return eligible_meta(s, evs, ids, now)
+        return eligible_meta(s, evs, ids, now, active_diagnosis_evidence_ids(s, now))
     qualifying = []
     for e in evs:
         d = e["data"]
@@ -215,6 +249,8 @@ def ingest(s: dict, event: dict, now: float) -> None:
     s["recent"] = (s["recent"] + [event])[-60:]
     s["revision"] += 1
     kind, d = event["kind"], event["data"]
+    if kind == "grab_failed":
+        s["failure_evidence"] = (s.get("failure_evidence", []) + [copy.deepcopy(event)])[-30:]
     if kind == "telemetry":
         s["telemetry"] = d
     if kind == "client_error" and is_meta and s["status"] != "completed":
@@ -233,6 +269,12 @@ def ingest(s: dict, event: dict, now: float) -> None:
         if s["status"] == "retest" and s["failures"] >= s["protocol"]["failure_threshold"]:
             manual_review(s, "retest_failed", now)
         elif s["failures"] >= s["protocol"]["failure_threshold"]:
+            verified = evidence(s, now)
+            distinct = {e["data"].get("attempt_id") for e in verified}
+            if len(distinct) >= s["protocol"]["failure_threshold"]:
+                selected = verified[-s["protocol"]["failure_threshold"]:]
+                s["diagnosis_evidence_ids"] = [e["event_id"] for e in selected]
+                s["diagnosis_started_at"] = now
             s["needs_diagnosis"] = True
     if kind == "help_request" and s["step"] == 3 and s["status"] == "running":
         s["needs_diagnosis"] = True
@@ -287,7 +329,10 @@ def apply_proposal(s: dict, proposal: dict, now: float) -> None:
         return
     s["status"] = "recovering"
     s["recoveries"] += 1
-    s["invalid_from_seq"] = min(e["seq"] for e in evidence(s, now))
+    verified = evidence(s, now)
+    s["invalid_from_seq"] = min(e["seq"] for e in verified)
+    s["diagnosis_evidence_ids"] = []
+    s["diagnosis_started_at"] = None
     command(s, "pause", now)
 
 

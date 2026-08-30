@@ -21,7 +21,8 @@ function render() {
   $('study').textContent = s.protocol.title; $('progress').value=s.progress;
   $('instruction').textContent=s.current_step.instruction;
   $('status').textContent=`${s.status} · step ${Math.min(s.step+1,6)}/6 · ${s.recoveries} recovery attempt(s)`;
-  $('diagnosis').textContent=s.diagnosis ? `${s.diagnosis.category}: ${s.diagnosis.summary}\nEvidence: ${s.diagnosis.evidence_ids.join(', ')}` : 'Waiting for actual evidence and a Gemini tool call.';
+  const latestAgentError=[...(s.audit||[])].reverse().find(a=>a.kind==='agent_error');
+  $('diagnosis').textContent=s.agent_job ? `Gemini ${s.agent_job} is making one evidence-based tool decision. Keep Unity Play active and both hands tracked; each call is limited to one minute and safely retries on failure.` : s.diagnosis ? `${s.diagnosis.category}: ${s.diagnosis.summary}\nEvidence: ${s.diagnosis.evidence_ids.join(', ')}` : s.status==='manual_review' && latestAgentError ? `Gemini did not finish: ${latestAgentError.detail.error_type}. Create a new session after correcting the model connection.` : 'Waiting for actual evidence and a Gemini tool call.';
   $('commands').textContent=(s.commands||[]).map(c=>`${c.action}: ${c.status}${c.ack ? ' / executed='+c.ack.success : ''}`).join(' → ');
   $('events').replaceChildren();
   [...s.recent].reverse().forEach(e=>{const tr=document.createElement('tr');const data=e.data;const values=[`#${e.seq}`,e.kind,data.text||`${data.object_id||''}${data.hand_grab_count!==undefined?' · Hand '+data.enabled_hand_grab_count+'/'+data.hand_grab_count+' · tracked '+data.tracked:''}`];values.forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.append(td);});$('events').append(tr);});
@@ -51,7 +52,7 @@ $('create').onclick=async()=>{
   try{const data=await(await api('/api/sessions','POST',{protocol_id:$('protocol').value})).json();sessions.unshift(data.session);selected=data.session.id;pairing={server_url:location.origin,session_id:selected,session_token:data.session_token};$('pair-json').textContent=JSON.stringify(pairing,null,2);$('pair').showModal();render();}
   catch(e){error(e);}finally{$('create').disabled=false;}
 };
-$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(pairing,null,2));$('notice').textContent='Private connection JSON copied. Paste into Unity, not into a repository or chat.';}catch(e){error(Error('Open Show connection JSON and copy it manually.'));}};
+$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(pairing,null,2));$('notice').textContent='Private connection JSON copied. Paste into Unity, not into a repository or chat.';}catch{error(Error('Open Show connection JSON and copy it manually.'));}};
 $('close-pair').onclick=()=>{$('pair').close();pairing=null;$('pair-json').textContent='';};
 $('pair').addEventListener('cancel',()=>{pairing=null;$('pair-json').textContent='';});
 $('save').onclick=async()=>{try{const p=await(await api('/api/protocols','POST',JSON.parse($('editor').value))).json();const option=document.createElement('option');option.value=p.id;option.textContent=p.id;$('protocol').append(option);$('protocol').value=p.id;$('notice').textContent='New immutable protocol saved.';}catch(e){error(e);}};
