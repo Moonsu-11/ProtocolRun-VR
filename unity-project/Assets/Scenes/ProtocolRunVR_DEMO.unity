@@ -1244,7 +1244,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "CAN GRAB\n\u2193"
+  m_Text: "CUBE_A\nCAN GRAB\n\u2193"
 --- !u!222 &570021065
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -1404,7 +1404,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "CAN'T GRAB\n\u2193"
+  m_Text: "CUBE_C\nCAN'T GRAB\n\u2193"
 --- !u!222 &611002886
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -2015,7 +2015,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 0
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: "CAN GRAB\n\u2193"
+  m_Text: "CUBE_B\nCAN GRAB\n\u2193"
 --- !u!222 &1046452923
 CanvasRenderer:
   m_ObjectHideFlags: 0
