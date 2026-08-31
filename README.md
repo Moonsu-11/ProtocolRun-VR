@@ -268,7 +268,7 @@ The bundled `/console/` is part of the FastAPI backend. The optional React dashb
 - Meta XR All-in-One SDK: `205.0.0`
 - OpenXR: `1.17.0`
 - Python: `3.12`
-- FastAPI: `0.135.1`
+- FastAPI: `0.141.1`
 - Uvicorn: `0.52.4`
 - Google ADK: `2.8.0`
 - Gemini model: `gemini-3.5-flash`
