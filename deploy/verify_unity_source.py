@@ -9,7 +9,7 @@ from pathlib import Path
 
 EXPECTED_PACKAGES = {
     "com.meta.xr.sdk.all": "205.0.0",
-    "com.unity.xr.openxr": "1.16.1",
+    "com.unity.xr.openxr": "1.17.0",
 }
 
 
