@@ -454,17 +454,23 @@ The backend test suite covers:
 - SQLite workflow
 - Firestore-compatible state transitions
 
-### Current CI status
+### CI verification
 
-The latest inspected GitHub Actions run had:
+The CI repair and verification workflow completed successfully for commit `fa5e832`.
 
-- Python tests: passed
+Verified in GitHub Actions:
+
+- Backend Python tests: passed
+- Unity static source verifier: passed with OpenXR `1.17.0`
+- Clean npm installation: passed
 - Dashboard TypeScript check: passed
-- Unity static source verifier: failed because it expected OpenXR `1.16.1` while the project manifest contains `1.17.0`
-- Dashboard production build: failed because `scripts/sites-env.sh` was invoked directly without an executable Git file mode
-- Docker build: skipped after the preceding API job failure
+- Dashboard production build: passed
+- Dashboard tests: passed
+- Backend Docker image build: passed
 
-These CI failures concern repository verification configuration. They do not establish a failure of the recorded local Quest recovery workflow. They should be corrected before representing the repository as fully green or completely reproducible.
+The repair aligned the Unity verifier with the OpenXR version declared in the project manifest, restored the required Unix executable modes for the shell scripts, and replaced the missing local Sites Vite plugin import with the pinned official `@openai/sites-vite-plugin` package.
+
+This green CI result verifies the repository's automated tests, static Unity source checks, dashboard build, and backend container build. It is not a Unity Editor compile, Quest hardware test, successful public Cloud Run request, Firestore application transaction, Vertex AI call from Cloud Run, or remote Quest-to-Cloud Run recovery verification.
 
 ## Privacy and security
 
