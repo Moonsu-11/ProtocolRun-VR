@@ -1,0 +1,147 @@
+name: CI Repair and Verification
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/fix-ci-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Configure Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+          cache: npm
+
+      - name: Apply verified CI repairs
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_or_skip(filename, old, new):
+              path = Path(filename)
+              content = path.read_text(encoding="utf-8")
+
+              if new in content:
+                  print(f"Already fixed: {filename}")
+                  return
+
+              if old not in content:
+                  raise SystemExit(
+                      f"Expected source text was not found in {filename}"
+                  )
+
+              path.write_text(
+                  content.replace(old, new, 1),
+                  encoding="utf-8",
+              )
+              print(f"Fixed: {filename}")
+
+          replace_or_skip(
+              "deploy/verify_unity_source.py",
+              '"com.unity.xr.openxr": "1.16.1"',
+              '"com.unity.xr.openxr": "1.17.0"',
+          )
+
+          for filename in [
+              "scripts/build-verified.sh",
+              "scripts/install-ci.sh",
+          ]:
+              replace_or_skip(
+                  filename,
+                  'exec "${script_dir}/sites-env.sh" -- "$0" "$@"',
+                  'exec bash "${script_dir}/sites-env.sh" -- "$0" "$@"',
+              )
+
+          replace_or_skip(
+              "vite.config.ts",
+              'import { sites } from "./build/sites-vite-plugin";',
+              'import { sites } from "@openai/sites-vite-plugin";',
+          )
+          PY
+
+          chmod +x \
+            scripts/sites-env.sh \
+            scripts/build-verified.sh \
+            scripts/install-ci.sh
+
+      - name: Install official Sites plugin
+        shell: bash
+        run: |
+          npm install \
+            --save-dev \
+            --save-exact \
+            @openai/sites-vite-plugin@0.2.0
+
+      - name: Install Python dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+
+      - name: Run backend tests
+        env:
+          PYTHONPATH: backend
+        run: pytest backend/tests -q
+
+      - name: Verify Unity source
+        run: python deploy/verify_unity_source.py
+
+      - name: Verify clean npm installation
+        run: npm ci
+
+      - name: Verify TypeScript
+        run: npx tsc --noEmit -p tsconfig.dashboard.json
+
+      - name: Build dashboard
+        run: npm run build
+
+      - name: Run dashboard tests
+        run: node --test tests/*.test.mjs
+
+      - name: Build backend container
+        run: docker build -t protocolrun-test backend
+
+      - name: Check repaired files
+        run: git diff --check
+
+      - name: Commit verified repairs
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add \
+            deploy/verify_unity_source.py \
+            package.json \
+            package-lock.json \
+            scripts/build-verified.sh \
+            scripts/install-ci.sh \
+            scripts/sites-env.sh \
+            vite.config.ts
+
+          if git diff --cached --quiet; then
+            echo "No repair changes were required."
+          else
+            git commit -m "fix: repair CI verification and dashboard build"
+            git push origin main
+          fi
